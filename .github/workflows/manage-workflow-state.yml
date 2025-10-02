@@ -1,0 +1,113 @@
+name: Manage Workflow State
+run-name: ${{ inputs.action }} -> ${{ inputs.repository }} (${{ inputs.workflow_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What would you like to do?"
+        required: true
+        type: choice
+        default: "list-workflows"
+        options:
+          - enable-workflow
+          - disable-workflow
+          - list-workflows
+      repository:
+        description: |
+          Target repository in the format "owner/repo".
+          Example: "octocat/Hello-World"
+        required: true
+        type: string
+      workflow_id:
+        description: |
+          Workflow file name (e.g., "ci.yml") or workflow ID.
+          Required for enable/disable actions.
+        required: false
+        type: string
+
+jobs:
+  list-workflows:
+    if: inputs.action == 'list-workflows'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.WORKFLOW_MANAGEMENT_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: List workflows
+        uses: ./.github/actions/list-workflows
+        with:
+          repository: ${{ inputs.repository }}
+
+  enable-workflow:
+    if: inputs.action == 'enable-workflow'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.WORKFLOW_MANAGEMENT_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Validate workflow_id
+        run: |
+          if [[ -z "${{ inputs.workflow_id }}" ]]; then
+            echo "❌ Error: workflow_id is required for enable-workflow action"
+            exit 1
+          fi
+      
+      - name: Enable workflow
+        uses: ./.github/actions/enable-workflow
+        with:
+          repository: ${{ inputs.repository }}
+          workflow_id: ${{ inputs.workflow_id }}
+
+  disable-workflow:
+    if: inputs.action == 'disable-workflow'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.WORKFLOW_MANAGEMENT_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Validate workflow_id
+        run: |
+          if [[ -z "${{ inputs.workflow_id }}" ]]; then
+            echo "❌ Error: workflow_id is required for disable-workflow action"
+            exit 1
+          fi
+      
+      - name: Disable workflow
+        uses: ./.github/actions/disable-workflow
+        with:
+          repository: ${{ inputs.repository }}
+          workflow_id: ${{ inputs.workflow_id }}
+
+  summary:
+    needs: [list-workflows, enable-workflow, disable-workflow]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "### Workflow State Management Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Action** | ${{ inputs.action }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repository** | \`${{ inputs.repository }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.action }}" != "list-workflows" ]]; then
+            echo "| **Workflow ID** | \`${{ inputs.workflow_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow completed at:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
