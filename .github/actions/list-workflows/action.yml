@@ -1,0 +1,78 @@
+name: 'List Repository Workflows'
+description: 'Lists all workflows for a given repository with their current state'
+inputs:
+  repository:
+    description: 'Target repository in the format "owner/repo"'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: List workflows
+      shell: bash
+      env:
+        REPO: ${{ inputs.repository }}
+      run: |
+        echo "================================================"
+        echo "🔍 LIST WORKFLOWS"
+        echo "================================================"
+        echo "📂 Repository: $REPO"
+        echo "🔗 API Endpoint: https://api.github.com/repos/$REPO/actions/workflows"
+        echo "================================================"
+        echo ""
+        
+        echo "🚀 Sending GET request..."
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/$REPO/actions/workflows")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        echo "📡 HTTP Status Code: $HTTP_CODE"
+        echo ""
+        
+        if [[ "$HTTP_CODE" == "200" ]]; then
+          echo "✅ Successfully retrieved workflows"
+          echo ""
+          echo "================================================"
+          echo "⚙️  WORKFLOWS LIST"
+          echo "================================================"
+          echo "$BODY" | jq -r '.workflows[] | "🔧 Name: \(.name)\n   ID: \(.id)\n   File: \(.path)\n   State: \(.state)\n   URL: \(.html_url)\n"'
+          echo "================================================"
+          TOTAL=$(echo "$BODY" | jq '.workflows | length')
+          ACTIVE=$(echo "$BODY" | jq '[.workflows[] | select(.state == "active")] | length')
+          DISABLED=$(echo "$BODY" | jq '[.workflows[] | select(.state == "disabled_manually" or .state == "disabled_inactivity")] | length')
+          echo "📊 Total workflows: $TOTAL"
+          echo "✅ Active: $ACTIVE"
+          echo "⏸️  Disabled: $DISABLED"
+          echo "================================================"
+        elif [[ "$HTTP_CODE" == "404" ]]; then
+          echo "❌ Repository not found (HTTP 404)"
+          echo ""
+          echo "🔍 Possible causes:"
+          echo "   - Repository name is incorrect"
+          echo "   - Repository doesn't exist"
+          echo "   - Token doesn't have access to this repository"
+          echo ""
+          echo "📄 Response body:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        elif [[ "$HTTP_CODE" == "403" ]]; then
+          echo "❌ Forbidden (HTTP 403)"
+          echo ""
+          echo "🔍 Possible causes:"
+          echo "   - Token doesn't have required permissions"
+          echo "   - API rate limit exceeded"
+          echo ""
+          echo "📄 Response body:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        else
+          echo "❌ Failed to list workflows (HTTP $HTTP_CODE)"
+          echo ""
+          echo "📄 Response body:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        fi
