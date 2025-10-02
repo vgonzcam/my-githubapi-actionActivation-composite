@@ -1,0 +1,78 @@
+name: 'Disable Workflow'
+description: 'Disables an active workflow in a repository'
+inputs:
+  repository:
+    description: 'Target repository in the format "owner/repo"'
+    required: true
+  workflow_id:
+    description: 'Workflow file name (e.g., "ci.yml") or workflow ID'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Disable workflow
+      shell: bash
+      env:
+        REPO: ${{ inputs.repository }}
+        WORKFLOW_ID: ${{ inputs.workflow_id }}
+      run: |
+        echo "================================================"
+        echo "⏸️  DISABLE WORKFLOW"
+        echo "================================================"
+        echo "📂 Repository: $REPO"
+        echo "⚙️  Workflow ID: $WORKFLOW_ID"
+        echo "🔗 API Endpoint: https://api.github.com/repos/$REPO/actions/workflows/$WORKFLOW_ID/disable"
+        echo "================================================"
+        echo ""
+        
+        echo "🚀 Sending PUT request..."
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/$REPO/actions/workflows/$WORKFLOW_ID/disable")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        echo "📡 HTTP Status Code: $HTTP_CODE"
+        echo ""
+        
+        if [[ "$HTTP_CODE" == "204" ]]; then
+          echo "✅ Successfully disabled workflow"
+          echo ""
+          echo "================================================"
+          echo "⏸️  WORKFLOW DISABLED"
+          echo "================================================"
+          echo "The workflow '$WORKFLOW_ID' has been disabled and will not run on triggers."
+          echo "================================================"
+        elif [[ "$HTTP_CODE" == "404" ]]; then
+          echo "❌ Workflow not found (HTTP 404)"
+          echo ""
+          echo "🔍 Possible causes:"
+          echo "   - Workflow ID or filename is incorrect"
+          echo "   - Workflow doesn't exist in this repository"
+          echo "   - Repository name is incorrect"
+          echo ""
+          echo "💡 Tip: Use the 'list-workflows' action to see all available workflows"
+          echo ""
+          echo "📄 Response body:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        elif [[ "$HTTP_CODE" == "403" ]]; then
+          echo "❌ Forbidden (HTTP 403)"
+          echo ""
+          echo "🔍 Possible causes:"
+          echo "   - Token doesn't have 'workflow' permission"
+          echo "   - Token doesn't have write access to the repository"
+          echo ""
+          echo "📄 Response body:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        else
+          echo "❌ Failed to disable workflow (HTTP $HTTP_CODE)"
+          echo ""
+          echo "📄 Response body:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        fi
