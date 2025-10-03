@@ -7,10 +7,6 @@ inputs:
   pattern:
     description: 'Regex pattern to match workflow names or file paths'
     required: true
-  dry_run:
-    description: 'Preview changes without applying them'
-    required: false
-    default: 'false'
 outputs:
   processed_count:
     description: 'Number of workflows processed'
@@ -53,6 +49,12 @@ runs:
           exit 1
         fi
         
+        # Validate pattern is a valid regex
+        if ! echo "test" | grep -E "$PATTERN" &>/dev/null && ! echo "test" | grep -vE "$PATTERN" &>/dev/null; then
+          echo "❌ Invalid regex pattern: $PATTERN"
+          exit 1
+        fi
+        
         FILTERED_JSON=$(echo "$BODY" | jq --arg pattern "$PATTERN" '
           .workflows | map(
             select(
@@ -77,13 +79,7 @@ runs:
       shell: bash
       env:
         REPO: ${{ inputs.repository }}
-        DRY_RUN: ${{ inputs.dry_run }}
       run: |
-        if [[ "$DRY_RUN" == "true" ]]; then
-          echo "DRY RUN MODE - No changes will be applied"
-          echo ""
-        fi
-        
         WORKFLOWS=$(cat /tmp/workflows_to_process.json)
         PROCESSED=0
         SUCCESS=0
@@ -112,20 +108,6 @@ runs:
               --arg path "$WORKFLOW_PATH" \
               --arg status "skipped" \
               --arg message "Already disabled" \
-              '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message}')
-            RESULTS=$(echo "$RESULTS" | jq --argjson result "$RESULT" '. + [$result]')
-            continue
-          fi
-          
-          if [[ "$DRY_RUN" == "true" ]]; then
-            echo "  Would disable (dry run)"
-            ((SUCCESS++))
-            RESULT=$(jq -n \
-              --arg id "$WORKFLOW_ID" \
-              --arg name "$WORKFLOW_NAME" \
-              --arg path "$WORKFLOW_PATH" \
-              --arg status "dry_run_success" \
-              --arg message "Would be disabled" \
               '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message}')
             RESULTS=$(echo "$RESULTS" | jq --argjson result "$RESULT" '. + [$result]')
             continue
@@ -181,6 +163,6 @@ runs:
         echo "failure_count=$FAILURE" >> $GITHUB_OUTPUT
         echo "results_json=$(echo "$RESULTS" | jq -c '.')" >> $GITHUB_OUTPUT
         
-        if [[ "$FAILURE" -gt 0 && "$DRY_RUN" != "true" ]]; then
+        if [[ "$FAILURE" -gt 0 ]]; then
           exit 1
         fi
