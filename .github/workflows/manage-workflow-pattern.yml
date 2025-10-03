@@ -21,15 +21,10 @@ on:
       pattern:
         description: |
           Regex pattern to match workflow names or file paths.
-          Examples: "^ci-.*", ".*test.*", "deploy-.*-prod"
+          Examples: "^ci-.*", ".*test.*", "deploy-.*-prod", ".*" (all)
           Leave empty for list-workflows to show all workflows.
         required: false
         type: string
-      dry_run:
-        description: "Preview changes without applying them (enable/disable only)"
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   list-workflows:
@@ -85,7 +80,6 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           pattern: ${{ inputs.pattern }}
-          dry_run: ${{ inputs.dry_run }}
 
   disable-workflows:
     if: inputs.action == 'disable-workflows'
@@ -116,7 +110,6 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           pattern: ${{ inputs.pattern }}
-          dry_run: ${{ inputs.dry_run }}
 
   summary:
     needs: [list-workflows, enable-workflows, disable-workflows]
@@ -134,10 +127,6 @@ jobs:
           echo "| **Action** | \`${{ inputs.action }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Repository** | \`${{ inputs.repository }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Pattern** | \`${{ inputs.pattern || 'N/A (all workflows)' }}\` |" >> $GITHUB_STEP_SUMMARY
-          
-          if [[ "${{ inputs.action }}" != "list-workflows" ]]; then
-            echo "| **Dry Run** | ${{ inputs.dry_run }} |" >> $GITHUB_STEP_SUMMARY
-          fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
@@ -161,10 +150,6 @@ jobs:
           if [[ "${{ inputs.action }}" == "enable-workflows" ]]; then
             echo "## ✅ Enable Workflows Results" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
-              echo "⚠️ **DRY RUN MODE** - No changes were applied" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-            fi
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
             echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
             echo "| **Processed** | ${{ needs.enable-workflows.outputs.processed_count }} |" >> $GITHUB_STEP_SUMMARY
@@ -176,10 +161,6 @@ jobs:
           if [[ "${{ inputs.action }}" == "disable-workflows" ]]; then
             echo "## ⏸️ Disable Workflows Results" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
-              echo "⚠️ **DRY RUN MODE** - No changes were applied" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-            fi
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
             echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
             echo "| **Processed** | ${{ needs.disable-workflows.outputs.processed_count }} |" >> $GITHUB_STEP_SUMMARY
