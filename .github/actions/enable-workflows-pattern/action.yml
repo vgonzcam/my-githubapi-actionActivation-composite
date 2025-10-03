@@ -5,8 +5,9 @@ inputs:
     description: 'Target repository in the format "owner/repo"'
     required: true
   pattern:
-    description: 'Regex pattern to match workflow names or file paths'
-    required: true
+    description: 'Regex pattern to match workflow names or file paths (leave empty for all)'
+    required: false
+    default: ''
 outputs:
   processed_count:
     description: 'Number of workflows processed'
@@ -49,23 +50,30 @@ runs:
           exit 1
         fi
         
-        # Validate pattern is a valid regex
-        if ! echo "test" | grep -E "$PATTERN" &>/dev/null && ! echo "test" | grep -vE "$PATTERN" &>/dev/null; then
-          echo "❌ Invalid regex pattern: $PATTERN"
-          exit 1
+        if [[ -n "$PATTERN" ]]; then
+          # Validate pattern is a valid regex
+          if ! echo "test" | grep -E "$PATTERN" &>/dev/null && ! echo "test" | grep -vE "$PATTERN" &>/dev/null; then
+            echo "❌ Invalid regex pattern: $PATTERN"
+            exit 1
+          fi
+          
+          echo "Filtering with pattern: $PATTERN"
+          
+          FILTERED_JSON=$(echo "$BODY" | jq --arg pattern "$PATTERN" '
+            .workflows | map(
+              select(
+                (.name | test($pattern; "i")) or 
+                (.path | test($pattern; "i"))
+              )
+            )
+          ')
+        else
+          echo "No pattern specified - processing all workflows"
+          FILTERED_JSON=$(echo "$BODY" | jq '.workflows')
         fi
         
-        FILTERED_JSON=$(echo "$BODY" | jq --arg pattern "$PATTERN" '
-          .workflows | map(
-            select(
-              (.name | test($pattern; "i")) or 
-              (.path | test($pattern; "i"))
-            )
-          )
-        ')
-        
         MATCHED_COUNT=$(echo "$FILTERED_JSON" | jq 'length')
-        echo "Found $MATCHED_COUNT workflows matching pattern: $PATTERN"
+        echo "Found $MATCHED_COUNT workflows to process"
         
         if [[ "$MATCHED_COUNT" -eq 0 ]]; then
           echo "[]" > /tmp/workflows_to_process.json
