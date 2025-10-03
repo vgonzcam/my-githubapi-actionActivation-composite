@@ -62,7 +62,14 @@ runs:
       run: |
         WORKFLOWS_JSON=$(cat /tmp/workflows_response.json)
         
+        # Validate pattern is a valid regex
         if [[ -n "$PATTERN" ]]; then
+          # Test if pattern is valid by attempting to use it
+          if ! echo "test" | grep -E "$PATTERN" &>/dev/null && ! echo "test" | grep -vE "$PATTERN" &>/dev/null; then
+            echo "❌ Invalid regex pattern: $PATTERN"
+            exit 1
+          fi
+          
           echo "Filtering with pattern: $PATTERN"
           
           FILTERED_JSON=$(echo "$WORKFLOWS_JSON" | jq --arg pattern "$PATTERN" '
