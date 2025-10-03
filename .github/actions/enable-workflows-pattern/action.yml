@@ -1,0 +1,186 @@
+name: 'Enable Workflows by Pattern'
+description: 'Enables workflows matching a regex pattern'
+inputs:
+  repository:
+    description: 'Target repository in the format "owner/repo"'
+    required: true
+  pattern:
+    description: 'Regex pattern to match workflow names or file paths'
+    required: true
+  dry_run:
+    description: 'Preview changes without applying them'
+    required: false
+    default: 'false'
+outputs:
+  processed_count:
+    description: 'Number of workflows processed'
+    value: ${{ steps.process.outputs.processed_count }}
+  success_count:
+    description: 'Number of workflows successfully enabled'
+    value: ${{ steps.process.outputs.success_count }}
+  failure_count:
+    description: 'Number of workflows that failed to enable'
+    value: ${{ steps.process.outputs.failure_count }}
+  results_json:
+    description: 'JSON array of processing results'
+    value: ${{ steps.process.outputs.results_json }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch and filter workflows
+      id: fetch
+      shell: bash
+      env:
+        REPO: ${{ inputs.repository }}
+        PATTERN: ${{ inputs.pattern }}
+      run: |
+        echo "Fetching workflows from $REPO..."
+        
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/$REPO/actions/workflows")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        echo "HTTP $HTTP_CODE"
+        
+        if [[ "$HTTP_CODE" != "200" ]]; then
+          echo "Response:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        fi
+        
+        FILTERED_JSON=$(echo "$BODY" | jq --arg pattern "$PATTERN" '
+          .workflows | map(
+            select(
+              (.name | test($pattern; "i")) or 
+              (.path | test($pattern; "i"))
+            )
+          )
+        ')
+        
+        MATCHED_COUNT=$(echo "$FILTERED_JSON" | jq 'length')
+        echo "Found $MATCHED_COUNT workflows matching pattern: $PATTERN"
+        
+        if [[ "$MATCHED_COUNT" -eq 0 ]]; then
+          echo "[]" > /tmp/workflows_to_process.json
+        else
+          echo "$FILTERED_JSON" > /tmp/workflows_to_process.json
+          echo "$FILTERED_JSON" | jq -r '.[] | "  • \(.name) (\(.state))"'
+        fi
+    
+    - name: Process workflows
+      id: process
+      shell: bash
+      env:
+        REPO: ${{ inputs.repository }}
+        DRY_RUN: ${{ inputs.dry_run }}
+      run: |
+        if [[ "$DRY_RUN" == "true" ]]; then
+          echo "DRY RUN MODE - No changes will be applied"
+          echo ""
+        fi
+        
+        WORKFLOWS=$(cat /tmp/workflows_to_process.json)
+        PROCESSED=0
+        SUCCESS=0
+        FAILURE=0
+        RESULTS="[]"
+        
+        while IFS= read -r workflow; do
+          if [[ -z "$workflow" || "$workflow" == "null" ]]; then
+            continue
+          fi
+          
+          WORKFLOW_ID=$(echo "$workflow" | jq -r '.id')
+          WORKFLOW_NAME=$(echo "$workflow" | jq -r '.name')
+          WORKFLOW_PATH=$(echo "$workflow" | jq -r '.path')
+          WORKFLOW_STATE=$(echo "$workflow" | jq -r '.state')
+          
+          echo "Processing: $WORKFLOW_NAME ($WORKFLOW_PATH)"
+          
+          ((PROCESSED++))
+          
+          if [[ "$WORKFLOW_STATE" == "active" ]]; then
+            echo "  Already active - skipped"
+            RESULT=$(jq -n \
+              --arg id "$WORKFLOW_ID" \
+              --arg name "$WORKFLOW_NAME" \
+              --arg path "$WORKFLOW_PATH" \
+              --arg status "skipped" \
+              --arg message "Already active" \
+              '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message}')
+            RESULTS=$(echo "$RESULTS" | jq --argjson result "$RESULT" '. + [$result]')
+            continue
+          fi
+          
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "  Would enable (dry run)"
+            ((SUCCESS++))
+            RESULT=$(jq -n \
+              --arg id "$WORKFLOW_ID" \
+              --arg name "$WORKFLOW_NAME" \
+              --arg path "$WORKFLOW_PATH" \
+              --arg status "dry_run_success" \
+              --arg message "Would be enabled" \
+              '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message}')
+            RESULTS=$(echo "$RESULTS" | jq --argjson result "$RESULT" '. + [$result]')
+            continue
+          fi
+          
+          ENABLE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/actions/workflows/$WORKFLOW_ID/enable")
+          
+          ENABLE_HTTP_CODE=$(echo "$ENABLE_RESPONSE" | tail -n1)
+          ENABLE_BODY=$(echo "$ENABLE_RESPONSE" | head -n -1)
+          
+          echo "  HTTP $ENABLE_HTTP_CODE"
+          
+          if [[ "$ENABLE_HTTP_CODE" == "204" ]]; then
+            echo "  ✅ Enabled"
+            ((SUCCESS++))
+            RESULT=$(jq -n \
+              --arg id "$WORKFLOW_ID" \
+              --arg name "$WORKFLOW_NAME" \
+              --arg path "$WORKFLOW_PATH" \
+              --arg status "success" \
+              --arg message "Successfully enabled" \
+              '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message}')
+          else
+            echo "  ❌ Failed"
+            if [[ -n "$ENABLE_BODY" ]]; then
+              echo "  Response: $(echo "$ENABLE_BODY" | jq -c '.' 2>/dev/null || echo "$ENABLE_BODY")"
+            fi
+            ((FAILURE++))
+            ERROR_MSG=$(echo "$ENABLE_BODY" | jq -r '.message // "Unknown error"' 2>/dev/null || echo "Unknown error")
+            RESULT=$(jq -n \
+              --arg id "$WORKFLOW_ID" \
+              --arg name "$WORKFLOW_NAME" \
+              --arg path "$WORKFLOW_PATH" \
+              --arg status "failure" \
+              --arg message "$ERROR_MSG" \
+              --argjson http_code "$ENABLE_HTTP_CODE" \
+              '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message, http_code: $http_code}')
+          fi
+          
+          RESULTS=$(echo "$RESULTS" | jq --argjson result "$RESULT" '. + [$result]')
+          
+        done < <(echo "$WORKFLOWS" | jq -c '.[]')
+        
+        echo ""
+        echo "Summary: $PROCESSED processed | $SUCCESS success | $FAILURE failed"
+        
+        echo "processed_count=$PROCESSED" >> $GITHUB_OUTPUT
+        echo "success_count=$SUCCESS" >> $GITHUB_OUTPUT
+        echo "failure_count=$FAILURE" >> $GITHUB_OUTPUT
+        echo "results_json=$(echo "$RESULTS" | jq -c '.')" >> $GITHUB_OUTPUT
+        
+        if [[ "$FAILURE" -gt 0 && "$DRY_RUN" != "true" ]]; then
+          exit 1
+        fi
