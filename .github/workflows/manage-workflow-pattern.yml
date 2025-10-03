@@ -22,7 +22,7 @@ on:
         description: |
           Regex pattern to match workflow names or file paths.
           Examples: "^ci-.*", ".*test.*", "deploy-.*-prod", ".*" (all)
-          Leave empty for list-workflows to show all workflows.
+          Leave empty to process all workflows.
         required: false
         type: string
 
@@ -67,13 +67,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Validate pattern
-        run: |
-          if [[ -z "${{ inputs.pattern }}" ]]; then
-            echo "❌ Error: pattern is required for enable-workflows action"
-            exit 1
-          fi
-      
       - name: Enable workflows by pattern
         id: enable
         uses: ./.github/actions/enable-workflows-pattern
@@ -96,13 +89,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
-      - name: Validate pattern
-        run: |
-          if [[ -z "${{ inputs.pattern }}" ]]; then
-            echo "❌ Error: pattern is required for disable-workflows action"
-            exit 1
-          fi
       
       - name: Disable workflows by pattern
         id: disable
