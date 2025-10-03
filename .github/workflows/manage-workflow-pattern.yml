@@ -1,0 +1,193 @@
+name: Manage Workflows by Pattern
+run-name: ${{ inputs.action }} workflows matching "${{ inputs.pattern }}" in ${{ inputs.repository }}
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What would you like to do?"
+        required: true
+        type: choice
+        default: "list-workflows"
+        options:
+          - enable-workflows
+          - disable-workflows
+          - list-workflows
+      repository:
+        description: |
+          Target repository in the format "owner/repo".
+          Example: "octocat/Hello-World"
+        required: true
+        type: string
+      pattern:
+        description: |
+          Regex pattern to match workflow names or file paths.
+          Examples: "^ci-.*", ".*test.*", "deploy-.*-prod"
+          Leave empty for list-workflows to show all workflows.
+        required: false
+        type: string
+      dry_run:
+        description: "Preview changes without applying them (enable/disable only)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  list-workflows:
+    if: inputs.action == 'list-workflows'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.WORKFLOW_MANAGEMENT_TOKEN }}
+    outputs:
+      workflows_json: ${{ steps.list.outputs.workflows_json }}
+      total_count: ${{ steps.list.outputs.total_count }}
+      active_count: ${{ steps.list.outputs.active_count }}
+      disabled_count: ${{ steps.list.outputs.disabled_count }}
+      matched_count: ${{ steps.list.outputs.matched_count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: List workflows
+        id: list
+        uses: ./.github/actions/list-workflows-pattern
+        with:
+          repository: ${{ inputs.repository }}
+          pattern: ${{ inputs.pattern }}
+
+  enable-workflows:
+    if: inputs.action == 'enable-workflows'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.WORKFLOW_MANAGEMENT_TOKEN }}
+    outputs:
+      processed_count: ${{ steps.enable.outputs.processed_count }}
+      success_count: ${{ steps.enable.outputs.success_count }}
+      failure_count: ${{ steps.enable.outputs.failure_count }}
+      results_json: ${{ steps.enable.outputs.results_json }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Validate pattern
+        run: |
+          if [[ -z "${{ inputs.pattern }}" ]]; then
+            echo "❌ Error: pattern is required for enable-workflows action"
+            exit 1
+          fi
+      
+      - name: Enable workflows by pattern
+        id: enable
+        uses: ./.github/actions/enable-workflows-pattern
+        with:
+          repository: ${{ inputs.repository }}
+          pattern: ${{ inputs.pattern }}
+          dry_run: ${{ inputs.dry_run }}
+
+  disable-workflows:
+    if: inputs.action == 'disable-workflows'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.WORKFLOW_MANAGEMENT_TOKEN }}
+    outputs:
+      processed_count: ${{ steps.disable.outputs.processed_count }}
+      success_count: ${{ steps.disable.outputs.success_count }}
+      failure_count: ${{ steps.disable.outputs.failure_count }}
+      results_json: ${{ steps.disable.outputs.results_json }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Validate pattern
+        run: |
+          if [[ -z "${{ inputs.pattern }}" ]]; then
+            echo "❌ Error: pattern is required for disable-workflows action"
+            exit 1
+          fi
+      
+      - name: Disable workflows by pattern
+        id: disable
+        uses: ./.github/actions/disable-workflows-pattern
+        with:
+          repository: ${{ inputs.repository }}
+          pattern: ${{ inputs.pattern }}
+          dry_run: ${{ inputs.dry_run }}
+
+  summary:
+    needs: [list-workflows, enable-workflows, disable-workflows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# 🔧 Workflow Pattern Management Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Action** | \`${{ inputs.action }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repository** | \`${{ inputs.repository }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pattern** | \`${{ inputs.pattern || 'N/A (all workflows)' }}\` |" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ inputs.action }}" != "list-workflows" ]]; then
+            echo "| **Dry Run** | ${{ inputs.dry_run }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # List workflows summary
+          if [[ "${{ inputs.action }}" == "list-workflows" ]]; then
+            echo "## 📊 Workflow Statistics" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| **Total Workflows** | ${{ needs.list-workflows.outputs.total_count }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Active Workflows** | ${{ needs.list-workflows.outputs.active_count }} ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Disabled Workflows** | ${{ needs.list-workflows.outputs.disabled_count }} ⏸️ |" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ inputs.pattern }}" ]]; then
+              echo "| **Matched by Pattern** | ${{ needs.list-workflows.outputs.matched_count }} 🎯 |" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          # Enable workflows summary
+          if [[ "${{ inputs.action }}" == "enable-workflows" ]]; then
+            echo "## ✅ Enable Workflows Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "⚠️ **DRY RUN MODE** - No changes were applied" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| **Processed** | ${{ needs.enable-workflows.outputs.processed_count }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Successful** | ${{ needs.enable-workflows.outputs.success_count }} ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Failed** | ${{ needs.enable-workflows.outputs.failure_count }} ❌ |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Disable workflows summary
+          if [[ "${{ inputs.action }}" == "disable-workflows" ]]; then
+            echo "## ⏸️ Disable Workflows Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "⚠️ **DRY RUN MODE** - No changes were applied" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| **Processed** | ${{ needs.disable-workflows.outputs.processed_count }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Successful** | ${{ needs.disable-workflows.outputs.success_count }} ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Failed** | ${{ needs.disable-workflows.outputs.failure_count }} ❌ |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow completed at:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
