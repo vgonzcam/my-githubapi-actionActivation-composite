@@ -92,6 +92,7 @@ runs:
         PROCESSED=0
         SUCCESS=0
         FAILURE=0
+        SKIPPED=0
         RESULTS="[]"
         
         while IFS= read -r workflow; do
@@ -110,6 +111,7 @@ runs:
           
           if [[ "$WORKFLOW_STATE" == "disabled_manually" || "$WORKFLOW_STATE" == "disabled_inactivity" ]]; then
             echo "  Already disabled - skipped"
+            ((SKIPPED++))
             RESULT=$(jq -n \
               --arg id "$WORKFLOW_ID" \
               --arg name "$WORKFLOW_NAME" \
@@ -164,7 +166,7 @@ runs:
         done < <(echo "$WORKFLOWS" | jq -c '.[]')
         
         echo ""
-        echo "Summary: $PROCESSED processed | $SUCCESS success | $FAILURE failed"
+        echo "Summary: $PROCESSED processed | $SUCCESS disabled | $SKIPPED skipped | $FAILURE failed"
         
         echo "processed_count=$PROCESSED" >> $GITHUB_OUTPUT
         echo "success_count=$SUCCESS" >> $GITHUB_OUTPUT
