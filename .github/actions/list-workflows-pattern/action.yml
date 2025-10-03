@@ -1,0 +1,103 @@
+name: 'List Workflows by Pattern'
+description: 'Lists workflows matching a regex pattern with their current state'
+inputs:
+  repository:
+    description: 'Target repository in the format "owner/repo"'
+    required: true
+  pattern:
+    description: 'Regex pattern to match workflow names or file paths (optional)'
+    required: false
+    default: ''
+outputs:
+  workflows_json:
+    description: 'JSON array of matched workflows'
+    value: ${{ steps.filter.outputs.workflows_json }}
+  total_count:
+    description: 'Total number of workflows'
+    value: ${{ steps.filter.outputs.total_count }}
+  active_count:
+    description: 'Number of active workflows'
+    value: ${{ steps.filter.outputs.active_count }}
+  disabled_count:
+    description: 'Number of disabled workflows'
+    value: ${{ steps.filter.outputs.disabled_count }}
+  matched_count:
+    description: 'Number of workflows matching the pattern'
+    value: ${{ steps.filter.outputs.matched_count }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch workflows from API
+      id: fetch
+      shell: bash
+      env:
+        REPO: ${{ inputs.repository }}
+      run: |
+        echo "Fetching workflows from $REPO..."
+        
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/$REPO/actions/workflows")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        echo "HTTP $HTTP_CODE"
+        
+        if [[ "$HTTP_CODE" != "200" ]]; then
+          echo "Response:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          exit 1
+        fi
+        
+        echo "$BODY" > /tmp/workflows_response.json
+    
+    - name: Filter workflows by pattern
+      id: filter
+      shell: bash
+      env:
+        PATTERN: ${{ inputs.pattern }}
+      run: |
+        WORKFLOWS_JSON=$(cat /tmp/workflows_response.json)
+        
+        if [[ -n "$PATTERN" ]]; then
+          echo "Filtering with pattern: $PATTERN"
+          
+          FILTERED_JSON=$(echo "$WORKFLOWS_JSON" | jq --arg pattern "$PATTERN" '
+            .workflows | map(
+              select(
+                (.name | test($pattern; "i")) or 
+                (.path | test($pattern; "i"))
+              )
+            )
+          ')
+          
+          MATCHED_COUNT=$(echo "$FILTERED_JSON" | jq 'length')
+        else
+          echo "No pattern specified - listing all workflows"
+          FILTERED_JSON=$(echo "$WORKFLOWS_JSON" | jq '.workflows')
+          MATCHED_COUNT=$(echo "$FILTERED_JSON" | jq 'length')
+        fi
+        
+        TOTAL_COUNT=$(echo "$WORKFLOWS_JSON" | jq '.workflows | length')
+        ACTIVE_COUNT=$(echo "$WORKFLOWS_JSON" | jq '[.workflows[] | select(.state == "active")] | length')
+        DISABLED_COUNT=$(echo "$WORKFLOWS_JSON" | jq '[.workflows[] | select(.state == "disabled_manually" or .state == "disabled_inactivity")] | length')
+        
+        echo ""
+        echo "Results:"
+        if [[ "$MATCHED_COUNT" -gt 0 ]]; then
+          echo "$FILTERED_JSON" | jq -r '.[] | "  • \(.name) (\(.path)) - \(.state)"'
+        else
+          echo "  No workflows found"
+        fi
+        
+        echo ""
+        echo "Summary: $MATCHED_COUNT matched | $TOTAL_COUNT total | $ACTIVE_COUNT active | $DISABLED_COUNT disabled"
+        
+        echo "workflows_json=$(echo "$FILTERED_JSON" | jq -c '.')" >> $GITHUB_OUTPUT
+        echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
+        echo "active_count=$ACTIVE_COUNT" >> $GITHUB_OUTPUT
+        echo "disabled_count=$DISABLED_COUNT" >> $GITHUB_OUTPUT
+        echo "matched_count=$MATCHED_COUNT" >> $GITHUB_OUTPUT
