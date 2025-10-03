@@ -31,6 +31,7 @@ runs:
         REPO: ${{ inputs.repository }}
         PATTERN: ${{ inputs.pattern }}
       run: |
+        set -e
         echo "Fetching workflows from $REPO..."
         
         RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
@@ -51,12 +52,6 @@ runs:
         fi
         
         if [[ -n "$PATTERN" ]]; then
-          # Validate pattern is a valid regex
-          if ! echo "test" | grep -E "$PATTERN" &>/dev/null && ! echo "test" | grep -vE "$PATTERN" &>/dev/null; then
-            echo "❌ Invalid regex pattern: $PATTERN"
-            exit 1
-          fi
-          
           echo "Filtering with pattern: $PATTERN"
           
           FILTERED_JSON=$(echo "$BODY" | jq --arg pattern "$PATTERN" '
@@ -88,6 +83,8 @@ runs:
       env:
         REPO: ${{ inputs.repository }}
       run: |
+        set +e  # Disable exit on error for this step
+        
         WORKFLOWS=$(cat /tmp/workflows_to_process.json)
         PROCESSED=0
         SUCCESS=0
@@ -106,12 +103,13 @@ runs:
           WORKFLOW_STATE=$(echo "$workflow" | jq -r '.state')
           
           echo "Processing: $WORKFLOW_NAME ($WORKFLOW_PATH)"
+          echo "  Current state: $WORKFLOW_STATE"
           
-          ((PROCESSED++))
+          PROCESSED=$((PROCESSED + 1))
           
           if [[ "$WORKFLOW_STATE" == "active" ]]; then
             echo "  Already active - skipped"
-            ((SKIPPED++))
+            SKIPPED=$((SKIPPED + 1))
             RESULT=$(jq -n \
               --arg id "$WORKFLOW_ID" \
               --arg name "$WORKFLOW_NAME" \
@@ -122,6 +120,8 @@ runs:
             RESULTS=$(echo "$RESULTS" | jq --argjson result "$RESULT" '. + [$result]')
             continue
           fi
+          
+          echo "  Sending enable request..."
           
           ENABLE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -135,8 +135,8 @@ runs:
           echo "  HTTP $ENABLE_HTTP_CODE"
           
           if [[ "$ENABLE_HTTP_CODE" == "204" ]]; then
-            echo "  ✅ Enabled"
-            ((SUCCESS++))
+            echo "  Successfully enabled"
+            SUCCESS=$((SUCCESS + 1))
             RESULT=$(jq -n \
               --arg id "$WORKFLOW_ID" \
               --arg name "$WORKFLOW_NAME" \
@@ -145,11 +145,11 @@ runs:
               --arg message "Successfully enabled" \
               '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message}')
           else
-            echo "  ❌ Failed"
+            echo "  Failed to enable"
             if [[ -n "$ENABLE_BODY" ]]; then
               echo "  Response: $(echo "$ENABLE_BODY" | jq -c '.' 2>/dev/null || echo "$ENABLE_BODY")"
             fi
-            ((FAILURE++))
+            FAILURE=$((FAILURE + 1))
             ERROR_MSG=$(echo "$ENABLE_BODY" | jq -r '.message // "Unknown error"' 2>/dev/null || echo "Unknown error")
             RESULT=$(jq -n \
               --arg id "$WORKFLOW_ID" \
@@ -174,5 +174,8 @@ runs:
         echo "results_json=$(echo "$RESULTS" | jq -c '.')" >> $GITHUB_OUTPUT
         
         if [[ "$FAILURE" -gt 0 ]]; then
+          echo "Exiting with error due to $FAILURE failure(s)"
           exit 1
         fi
+        
+        echo "Process completed successfully"
