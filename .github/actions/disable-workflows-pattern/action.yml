@@ -51,7 +51,6 @@ runs:
         fi
         
         if [[ -n "$PATTERN" ]]; then
-          # Validate pattern is a valid regex
           if ! echo "test" | grep -E "$PATTERN" &>/dev/null && ! echo "test" | grep -vE "$PATTERN" &>/dev/null; then
             echo "❌ Invalid regex pattern: $PATTERN"
             exit 1
@@ -106,6 +105,7 @@ runs:
           WORKFLOW_STATE=$(echo "$workflow" | jq -r '.state')
           
           echo "Processing: $WORKFLOW_NAME ($WORKFLOW_PATH)"
+          echo "  Current state: $WORKFLOW_STATE"
           
           ((PROCESSED++))
           
@@ -123,6 +123,8 @@ runs:
             continue
           fi
           
+          echo "  Sending disable request..."
+          
           DISABLE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -135,7 +137,7 @@ runs:
           echo "  HTTP $DISABLE_HTTP_CODE"
           
           if [[ "$DISABLE_HTTP_CODE" == "204" ]]; then
-            echo "  ⏸️ Disabled"
+            echo "  ✅ Successfully disabled"
             ((SUCCESS++))
             RESULT=$(jq -n \
               --arg id "$WORKFLOW_ID" \
@@ -145,9 +147,9 @@ runs:
               --arg message "Successfully disabled" \
               '{workflow_id: $id, workflow_name: $name, workflow_path: $path, status: $status, message: $message}')
           else
-            echo "  ❌ Failed"
+            echo "  ❌ Failed to disable"
             if [[ -n "$DISABLE_BODY" ]]; then
-              echo "  Response: $(echo "$DISABLE_BODY" | jq -c '.' 2>/dev/null || echo "$DISABLE_BODY")"
+              echo "  Response body: $(echo "$DISABLE_BODY" | jq -c '.' 2>/dev/null || echo "$DISABLE_BODY")"
             fi
             ((FAILURE++))
             ERROR_MSG=$(echo "$DISABLE_BODY" | jq -r '.message // "Unknown error"' 2>/dev/null || echo "Unknown error")
@@ -174,5 +176,8 @@ runs:
         echo "results_json=$(echo "$RESULTS" | jq -c '.')" >> $GITHUB_OUTPUT
         
         if [[ "$FAILURE" -gt 0 ]]; then
+          echo "Exiting with error due to failures"
           exit 1
         fi
+        
+        echo "Process completed successfully"
